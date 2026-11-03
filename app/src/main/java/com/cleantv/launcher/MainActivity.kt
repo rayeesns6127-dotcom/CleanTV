@@ -28,7 +28,8 @@ import java.text.SimpleDateFormat
 import java.util.Locale
 import kotlin.concurrent.thread
 
-data class AppItem(val label: String, val pkg: String, val intent: Intent, val image: Drawable, val banner: Boolean)
+data class AppItem(val label: String, val pkg: String, val intent: Intent, val icon: Drawable)
+data class Day(val name: String, val icon: Int, val temp: String)
 
 class MainActivity : Activity() {
     private lateinit var prefs: SharedPreferences
@@ -41,13 +42,20 @@ class MainActivity : Activity() {
         "com.spotify.tv.android", "com.disney.disneyplus", "in.startv.hotstar"
     )
 
+    private val niceNames = mapOf(
+        "com.android.vending" to "Play Store", "com.google.android.youtube.tv" to "YouTube",
+        "com.google.android.youtube" to "YouTube", "com.amazon.amazonvideo.livingroom" to "Prime Video",
+        "com.netflix.ninja" to "Netflix", "org.videolan.vlc" to "VLC", "com.spotify.tv.android" to "Spotify",
+        "com.android.tv.settings" to "Settings", "org.xbmc.kodi" to "Kodi", "com.disney.disneyplus" to "Disney+"
+    )
+
     override fun onCreate(b: Bundle?) {
         super.onCreate(b)
         setContentView(R.layout.activity_main)
         prefs = getSharedPreferences("launcher", MODE_PRIVATE)
         adapter = AppAdapter({ open(it) }, { menu(it) }, { prefs.getBoolean("lock", false) })
         val grid = findViewById<RecyclerView>(R.id.grid)
-        grid.layoutManager = GridLayoutManager(this, 5)
+        grid.layoutManager = GridLayoutManager(this, 6)
         grid.adapter = adapter
         findViewById<View>(R.id.icBt).setOnClickListener { go(Settings.ACTION_BLUETOOTH_SETTINGS) }
         findViewById<View>(R.id.icWifi).setOnClickListener { go(Settings.ACTION_WIFI_SETTINGS) }
@@ -67,6 +75,8 @@ class MainActivity : Activity() {
     @Suppress("OVERRIDE_DEPRECATION")
     override fun onBackPressed() { /* home screen: Back does nothing */ }
 
+    private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
+
     private fun go(action: String) {
         try { startActivity(Intent(action)) } catch (e: Exception) { toast("Not available on this TV") }
     }
@@ -76,6 +86,9 @@ class MainActivity : Activity() {
     private fun toast(s: String) = Toast.makeText(this, s, Toast.LENGTH_SHORT).show()
     private fun dlg() = AlertDialog.Builder(this, android.R.style.Theme_Material_Dialog_Alert)
 
+    private fun clean(pkg: String, raw: String): String =
+        niceNames[pkg] ?: raw.replace(" for Android TV", "").replace(" for TV", "").replace("Android TV", "").trim().ifEmpty { raw }
+
     private fun allApps(): List<AppItem> {
         val pm = packageManager
         val out = LinkedHashMap<String, AppItem>()
@@ -84,8 +97,7 @@ class MainActivity : Activity() {
                 val pkg = ri.activityInfo.packageName
                 if (pkg == packageName || out.containsKey(pkg)) continue
                 val launch = pm.getLeanbackLaunchIntentForPackage(pkg) ?: pm.getLaunchIntentForPackage(pkg) ?: continue
-                val banner = ri.activityInfo.loadBanner(pm)
-                out[pkg] = AppItem(ri.loadLabel(pm).toString(), pkg, launch, banner ?: ri.activityInfo.loadIcon(pm), banner != null)
+                out[pkg] = AppItem(clean(pkg, ri.loadLabel(pm).toString()), pkg, launch, ri.activityInfo.loadIcon(pm))
             }
         }
         return out.values.sortedBy { it.label.lowercase() }
@@ -168,16 +180,16 @@ class MainActivity : Activity() {
         return c.inputStream.bufferedReader().use { it.readText() }
     }
 
-    private fun wx(c: Int): Pair<String, String> = when (c) {
-        0 -> "☀️" to "Clear"
-        1, 2 -> "⛅" to "Partly cloudy"
-        3 -> "☁️" to "Overcast"
-        45, 48 -> "🌫️" to "Fog"
-        in 51..57 -> "🌦️" to "Drizzle"
-        in 61..67, in 80..82 -> "🌧️" to "Rain"
-        in 71..77, 85, 86 -> "❄️" to "Snow"
-        in 95..99 -> "⛈️" to "Thunderstorm"
-        else -> "🌡️" to "Unknown"
+    private fun wx(c: Int): Pair<Int, String> = when (c) {
+        0 -> R.drawable.w_sun to "Clear"
+        1, 2 -> R.drawable.w_partly to "Partly cloudy"
+        3 -> R.drawable.w_cloud to "Overcast"
+        45, 48 -> R.drawable.w_fog to "Fog"
+        in 51..57 -> R.drawable.w_rain to "Drizzle"
+        in 61..67, in 80..82 -> R.drawable.w_rain to "Rain"
+        in 71..77, 85, 86 -> R.drawable.w_snow to "Snow"
+        in 95..99 -> R.drawable.w_storm to "Thunderstorm"
+        else -> R.drawable.w_cloud to "Cloudy"
     }
 
     private fun loadWeather() {
@@ -193,22 +205,31 @@ class MainActivity : Activity() {
                 val (icon, cond) = wx(c.getInt("weather_code"))
                 val inF = SimpleDateFormat("yyyy-MM-dd", Locale.US); val outF = SimpleDateFormat("EEE", Locale.getDefault())
                 val days = (1..5).map { i ->
-                    val (ic, _) = wx(d.getJSONArray("weather_code").getInt(i))
-                    outF.format(inF.parse(d.getJSONArray("time").getString(i))!!) + "\n" + ic + "\n" +
-                        Math.round(d.getJSONArray("temperature_2m_max").getDouble(i)) + "°/" + Math.round(d.getJSONArray("temperature_2m_min").getDouble(i)) + "°"
+                    Day(
+                        outF.format(inF.parse(d.getJSONArray("time").getString(i))!!),
+                        wx(d.getJSONArray("weather_code").getInt(i)).first,
+                        Math.round(d.getJSONArray("temperature_2m_max").getDouble(i)).toString() + "°/" +
+                            Math.round(d.getJSONArray("temperature_2m_min").getDouble(i)) + "°"
+                    )
                 }
                 runOnUiThread {
-                    tv(R.id.wIcon).text = icon
+                    findViewById<ImageView>(R.id.wIcon).setImageResource(icon)
                     tv(R.id.wTemp).text = "${Math.round(c.getDouble("temperature_2m"))}°C"
                     tv(R.id.wCity).text = g.getString("name"); tv(R.id.wCond).text = cond
                     tv(R.id.wHum).text = "Humidity  ${c.getInt("relative_humidity_2m")}%"
                     tv(R.id.wWind).text = "Wind  ${Math.round(c.getDouble("wind_speed_10m"))} km/h"
                     tv(R.id.wFeels).text = "Feels like  ${Math.round(c.getDouble("apparent_temperature"))}°C"
                     val box = findViewById<LinearLayout>(R.id.forecast); box.removeAllViews()
-                    for (s in days) box.addView(TextView(this).apply {
-                        gravity = Gravity.CENTER; textSize = 12f; setTextColor(0xFFC8CCD4.toInt()); text = s
-                        minWidth = (76 * resources.displayMetrics.density).toInt()
-                    })
+                    for (f in days) {
+                        val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER; minimumWidth = dp(76) }
+                        col.addView(TextView(this).apply { text = f.name; textSize = 12f; setTextColor(0xFFAEB8CC.toInt()); gravity = Gravity.CENTER })
+                        col.addView(ImageView(this).apply {
+                            setImageResource(f.icon)
+                            layoutParams = LinearLayout.LayoutParams(dp(26), dp(26)).apply { topMargin = dp(4); bottomMargin = dp(4) }
+                        })
+                        col.addView(TextView(this).apply { text = f.temp; textSize = 12f; setTextColor(0xFFFFFFFF.toInt()); gravity = Gravity.CENTER })
+                        box.addView(col)
+                    }
                 }
             } catch (e: Exception) {
                 runOnUiThread { tv(R.id.wCond).text = "Weather unavailable" }
@@ -228,6 +249,7 @@ class AppAdapter(
     fun submit(l: List<AppItem>) { items = l; notifyDataSetChanged() }
 
     class VH(v: View) : RecyclerView.ViewHolder(v) {
+        val card: View = v.findViewById(R.id.card)
         val img: ImageView = v.findViewById(R.id.img)
         val name: TextView = v.findViewById(R.id.name)
     }
@@ -237,17 +259,16 @@ class AppAdapter(
 
     override fun onBindViewHolder(h: VH, i: Int) {
         val a = items[i]
-        val d = h.itemView.resources.displayMetrics.density
-        h.img.setImageDrawable(a.image)
-        if (a.banner) { h.img.scaleType = ImageView.ScaleType.CENTER_CROP; h.img.setPadding(0, 0, 0, 0) }
-        else { h.img.scaleType = ImageView.ScaleType.CENTER_INSIDE; h.img.setPadding((24 * d).toInt(), (14 * d).toInt(), (24 * d).toInt(), (36 * d).toInt()) }
-        h.name.visibility = if (a.banner) View.GONE else View.VISIBLE
+        h.img.setImageDrawable(a.icon)
         h.name.text = a.label
-        h.itemView.setOnClickListener { click(a) }
-        h.itemView.setOnLongClickListener { if (locked()) false else { long(a); true } }
-        h.itemView.setOnFocusChangeListener { v, f ->
-            v.animate().scaleX(if (f) 1.08f else 1f).scaleY(if (f) 1.08f else 1f).setDuration(120).start()
-            v.translationZ = if (f) 8f else 0f
+        h.name.setTextColor(0xFFAEB8CC.toInt())
+        h.card.setOnClickListener { click(a) }
+        h.card.setOnLongClickListener { if (locked()) false else { long(a); true } }
+        h.card.setOnFocusChangeListener { _, f ->
+            val s = if (f) 1.1f else 1f
+            h.itemView.animate().scaleX(s).scaleY(s).setDuration(130).start()
+            h.itemView.translationZ = if (f) 10f else 0f
+            h.name.setTextColor(if (f) 0xFFFFFFFF.toInt() else 0xFFAEB8CC.toInt())
         }
     }
 }
