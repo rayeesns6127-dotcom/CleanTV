@@ -1,0 +1,9 @@
+# One package name per line. Lines starting with # are ignored.
+# Find candidates with:  adb shell pm list packages -s     (system apps)
+# Examples (uncomment only if they exist on YOUR TV):
+# com.google.android.tvrecommendations
+# com.google.android.leanbacklauncher.recommendations
+# Stock launcher: remove ONLY after Clean TV is installed and works,
+# otherwise the TV may have no home screen:
+# com.google.android.tvlauncher
+# com.google.android.apps.tv.launcherx
